@@ -22,27 +22,30 @@ function saveData() {
 }
 
 function escapeMarkdown(text) {
-  if (!text) return '';
-  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+  return text.replace(/([\\_*[\]()~`>#+=|{}.!-])/g, '\\$1');
 }
 
 function formatDateTime(iso) {
-  const date = new Date(iso);
-  const d = date.toLocaleDateString('uk-UA');
-  const t = date.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
-  return `${d} ${t}`;
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('uk-UA')} ${d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-function getItemKeyboard(item) {
-  if (!shoppingList[item]) return Markup.inlineKeyboard([]);
-  const isBought = shoppingList[item].bought;
-  const buttons = [[Markup.button.callback(isBought ? '✅ Куплено' : '🛒 Купити', `buy_${item}`)]];
-  if (!isBought) {
-    buttons.push([Markup.button.callback('💬 Коментар', `comment_${item}`)]);
+function generateId() {
+  return Math.random().toString(36).substring(2, 10);
+}
+
+function getItemKeyboard(id) {
+  const item = shoppingList[id];
+  if (!item) return Markup.inlineKeyboard([]);
+  const buttons = [[
+    Markup.button.callback(item.bought ? '✅ Куплено' : '🛒 Купити', `buy_${id}`)
+  ]];
+  if (!item.bought) {
+    buttons.push([Markup.button.callback('💬 Коментар', `comment_${id}`)]);
     buttons.push([
-      Markup.button.callback('✏️ Редагувати', `edit_${item}`),
-      Markup.button.callback('🗑 Видалити', `delete_${item}`),
-      Markup.button.callback('❌ Коментар', `delcom_${item}`)
+      Markup.button.callback('✏️ Редагувати', `edit_${id}`),
+      Markup.button.callback('🗑 Видалити', `delete_${id}`),
+      Markup.button.callback('❌ Коментар', `delcom_${id}`)
     ]);
   }
   return Markup.inlineKeyboard(buttons);
@@ -53,24 +56,24 @@ async function sendFullList(ctx) {
     await ctx.reply('📝 Список порожній.');
     return;
   }
-  for (const [item, data] of Object.entries(shoppingList)) {
-    const status = data.bought ? '✅' : '⬜️';
-    const comment = data.comment ? `\n💬 _${escapeMarkdown(data.comment)}_` : '';
-    const meta = `\n_👤 ${data.author_name}  🕓 ${escapeMarkdown(formatDateTime(data.created_at))}_`;
-    const message = `${status} *${escapeMarkdown(item)}*${comment}${meta}`;
+  for (const [id, item] of Object.entries(shoppingList)) {
+    const comment = item.comment ? `\n💬 _${escapeMarkdown(item.comment)}_` : '';
+    const meta = `\n_👤 ${item.author_name}  🕓 ${escapeMarkdown(formatDateTime(item.created_at))}_`;
+    const msg = `${item.bought ? '✅' : '⬜️'} *${escapeMarkdown(item.name)}*${comment}${meta}`;
     try {
-      const sent = await ctx.replyWithMarkdownV2(message, getItemKeyboard(item));
-      shoppingList[item].message_id = sent.message_id;
+      const sent = await ctx.replyWithMarkdownV2(msg, getItemKeyboard(id));
+      item.message_id = sent.message_id;
       saveData();
     } catch (err) {
       console.error('Помилка при надсиланні:', err);
     }
-    await new Promise(res => setTimeout(res, 500));
+    await new Promise(r => setTimeout(r, 500));
   }
-  const msg = await ctx.reply('⚙️ Дія зі списком', Markup.inlineKeyboard([
+
+  const sumMsg = await ctx.reply('⚙️ Дія зі списком', Markup.inlineKeyboard([
     Markup.button.callback('📋 Підбити підсумок', 'summary')
   ]));
-  summaryMessageId = msg.message_id;
+  summaryMessageId = sumMsg.message_id;
 }
 
 bot.start((ctx) => {
@@ -83,23 +86,19 @@ bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
 
   if (pendingComments[userId]) {
-    const item = pendingComments[userId];
-    shoppingList[item].comment = text;
+    const id = pendingComments[userId];
+    shoppingList[id].comment = text;
     delete pendingComments[userId];
     saveData();
 
-    const data = shoppingList[item];
-    const status = data.bought ? '✅' : '⬜️';
+    const item = shoppingList[id];
     const comment = `\n💬 _${escapeMarkdown(text)}_`;
-    const meta = `\n_👤 ${data.author_name}  🕓 ${escapeMarkdown(formatDateTime(data.created_at))}_`;
-    const msgId = data.message_id;
-
-    await ctx.telegram.editMessageText(ctx.chat.id, msgId, null,
-      `${status} *${escapeMarkdown(item)}*${comment}${meta}`, {
+    const meta = `\n_👤 ${item.author_name}  🕓 ${escapeMarkdown(formatDateTime(item.created_at))}_`;
+    const msg = `${item.bought ? '✅' : '⬜️'} *${escapeMarkdown(item.name)}*${comment}${meta}`;
+    ctx.telegram.editMessageText(ctx.chat.id, item.message_id, null, msg, {
       parse_mode: 'MarkdownV2',
-      ...getItemKeyboard(item)
+      ...getItemKeyboard(id)
     });
-
     ctx.deleteMessage(ctx.message.message_id).catch(() => {});
     if (pendingCommentMessages[userId]) {
       ctx.deleteMessage(pendingCommentMessages[userId]).catch(() => {});
@@ -109,87 +108,83 @@ bot.on('text', async (ctx) => {
   }
 
   if (pendingEdits[userId]) {
-    const oldItem = pendingEdits[userId];
-    const newItem = text;
-    const data = shoppingList[oldItem];
-    delete shoppingList[oldItem];
-    shoppingList[newItem] = { ...data };
+    const id = pendingEdits[userId];
+    shoppingList[id].name = text;
     delete pendingEdits[userId];
     saveData();
 
-    const status = data.bought ? '✅' : '⬜️';
-    const comment = data.comment ? `\n💬 _${escapeMarkdown(data.comment)}_` : '';
-    const meta = `\n_👤 ${data.author_name}  🕓 ${escapeMarkdown(formatDateTime(data.created_at))}_`;
-    const msgId = data.message_id;
-
-    await ctx.telegram.editMessageText(ctx.chat.id, msgId, null,
-      `${status} *${escapeMarkdown(newItem)}*${comment}${meta}`, {
+    const item = shoppingList[id];
+    const comment = item.comment ? `\n💬 _${escapeMarkdown(item.comment)}_` : '';
+    const meta = `\n_👤 ${item.author_name}  🕓 ${escapeMarkdown(formatDateTime(item.created_at))}_`;
+    const msg = `${item.bought ? '✅' : '⬜️'} *${escapeMarkdown(text)}*${comment}${meta}`;
+    ctx.telegram.editMessageText(ctx.chat.id, item.message_id, null, msg, {
       parse_mode: 'MarkdownV2',
-      ...getItemKeyboard(newItem)
+      ...getItemKeyboard(id)
     });
-
     ctx.deleteMessage(ctx.message.message_id).catch(() => {});
     return;
   }
 
-  if (!shoppingList[text]) {
-    shoppingList[text] = {
-      bought: false,
-      comment: '',
-      marked_by: null,
-      message_id: null,
-      author_id: userId,
-      author_name: escapeMarkdown(ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name || 'Користувач'),
-      created_at: new Date().toISOString()
-    };
-    saveData();
-
-    if (summaryMessageId) {
-      ctx.telegram.deleteMessage(ctx.chat.id, summaryMessageId).catch(() => {});
-      summaryMessageId = null;
-    }
-
-    ctx.deleteMessage(ctx.message.message_id).catch(() => {});
-    const meta = `\n_👤 ${shoppingList[text].author_name}  🕓 ${escapeMarkdown(formatDateTime(shoppingList[text].created_at))}_`;
-    const msg = await ctx.replyWithMarkdownV2(`⬜️ *${escapeMarkdown(text)}*${meta}`, getItemKeyboard(text));
-    shoppingList[text].message_id = msg.message_id;
-    saveData();
-
-    const sumMsg = await ctx.reply('⚙️ Дія зі списком', Markup.inlineKeyboard([
-      Markup.button.callback('📋 Підбити підсумок', 'summary')
-    ]));
-    summaryMessageId = sumMsg.message_id;
-  } else {
-    ctx.reply(`"${text}" вже є у списку.`, getItemKeyboard(text));
+  const duplicate = Object.values(shoppingList).find(p => p.name === text);
+  if (duplicate) {
+    const dupId = Object.keys(shoppingList).find(k => shoppingList[k].name === text);
+    return ctx.reply(`"${text}" вже є у списку.`, getItemKeyboard(dupId));
   }
+
+  const id = generateId();
+  shoppingList[id] = {
+    name: text,
+    bought: false,
+    comment: '',
+    marked_by: null,
+    message_id: null,
+    author_id: userId,
+    author_name: escapeMarkdown(ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name || 'Користувач'),
+    created_at: new Date().toISOString()
+  };
+  saveData();
+
+  if (summaryMessageId) {
+    ctx.telegram.deleteMessage(ctx.chat.id, summaryMessageId).catch(() => {});
+    summaryMessageId = null;
+  }
+
+  ctx.deleteMessage(ctx.message.message_id).catch(() => {});
+  const item = shoppingList[id];
+  const comment = '';
+  const meta = `\n_👤 ${item.author_name}  🕓 ${escapeMarkdown(formatDateTime(item.created_at))}_`;
+  const msg = `⬜️ *${escapeMarkdown(text)}*${comment}${meta}`;
+  const sent = await ctx.replyWithMarkdownV2(msg, getItemKeyboard(id));
+  item.message_id = sent.message_id;
+  saveData();
+
+  const sumMsg = await ctx.reply('⚙️ Дія зі списком', Markup.inlineKeyboard([
+    Markup.button.callback('📋 Підбити підсумок', 'summary')
+  ]));
+  summaryMessageId = sumMsg.message_id;
 });
 
 bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
-  const item = data.split('_')[1];
   const userId = ctx.from.id;
 
   if (data === 'summary') {
-    for (const [item, val] of Object.entries(shoppingList)) {
-      if (val.message_id) ctx.telegram.deleteMessage(ctx.chat.id, val.message_id).catch(() => {});
-      val.message_id = null;
+    for (const item of Object.values(shoppingList)) {
+      if (item.message_id) ctx.telegram.deleteMessage(ctx.chat.id, item.message_id).catch(() => {});
+      item.message_id = null;
     }
+    if (summaryMessageId) ctx.telegram.deleteMessage(ctx.chat.id, summaryMessageId).catch(() => {});
+    summaryMessageId = null;
 
-    if (summaryMessageId) {
-      ctx.telegram.deleteMessage(ctx.chat.id, summaryMessageId).catch(() => {});
-      summaryMessageId = null;
-    }
-
-    const summaryText = Object.entries(shoppingList).map(([item, data]) => {
-      const comment = data.comment ? ` (${data.comment})` : '';
-      return `${data.bought ? '✅' : '⬜️'} ${item}${comment}`;
+    const summaryText = Object.values(shoppingList).map(i => {
+      const c = i.comment ? ` (${i.comment})` : '';
+      return `${i.bought ? '✅' : '⬜️'} ${i.name}${c}`;
     }).join('\n');
 
     await ctx.reply(`📦 Поточний список:\n\n${summaryText}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔁 Перенести не куплені', 'preserve')],
       [Markup.button.callback('🗑 Очистити повністю', 'clear_all')]
     ]));
-
     return;
   }
 
@@ -220,76 +215,75 @@ bot.on('callback_query', async (ctx) => {
     return;
   }
 
-  if (!shoppingList[item]) return ctx.answerCbQuery('Продукт не знайдено');
+  const [cmd, id] = data.split('_');
+  const item = shoppingList[id];
+  if (!item) return ctx.answerCbQuery('Продукт не знайдено');
 
-  const prod = shoppingList[item];
-
-  if (data.startsWith('buy_')) {
-    if (!prod.bought) {
-      prod.bought = true;
-      prod.marked_by = userId;
+  if (cmd === 'buy') {
+    if (!item.bought) {
+      item.bought = true;
+      item.marked_by = userId;
     } else {
-      if (prod.marked_by !== userId)
+      if (item.marked_by !== userId)
         return ctx.answerCbQuery('🔒 Лише той, хто позначив, може зняти мітку', { show_alert: true });
-      prod.bought = false;
-      prod.marked_by = null;
+      item.bought = false;
+      item.marked_by = null;
     }
-
-    const status = prod.bought ? '✅' : '⬜️';
-    const comment = prod.comment ? `\n💬 _${escapeMarkdown(prod.comment)}_` : '';
-    const meta = `\n_👤 ${prod.author_name}  🕓 ${escapeMarkdown(formatDateTime(prod.created_at))}_`;
-
-    ctx.telegram.editMessageText(ctx.chat.id, prod.message_id, null,
-      `${status} *${escapeMarkdown(item)}*${comment}${meta}`, {
-      parse_mode: 'MarkdownV2',
-      ...getItemKeyboard(item)
-    }).catch(console.error);
     saveData();
-    return ctx.answerCbQuery(prod.bought ? 'Позначено як куплено' : 'Позначку знято');
+
+    const comment = item.comment ? `\n💬 _${escapeMarkdown(item.comment)}_` : '';
+    const meta = `\n_👤 ${item.author_name}  🕓 ${escapeMarkdown(formatDateTime(item.created_at))}_`;
+    const msg = `${item.bought ? '✅' : '⬜️'} *${escapeMarkdown(item.name)}*${comment}${meta}`;
+    ctx.telegram.editMessageText(ctx.chat.id, item.message_id, null, msg, {
+      parse_mode: 'MarkdownV2',
+      ...getItemKeyboard(id)
+    });
+
+    return ctx.answerCbQuery(item.bought ? 'Позначено як куплено' : 'Позначку знято');
   }
 
-  if (data.startsWith('comment_')) {
-    if (ctx.from.id !== prod.author_id)
+  if (cmd === 'comment') {
+    if (ctx.from.id !== item.author_id)
       return ctx.answerCbQuery('🔒 Лише автор може додати коментар', { show_alert: true });
-    pendingComments[userId] = item;
-    const msg = await ctx.reply(`✏️ Напиши коментар до "${item}":`);
+
+    pendingComments[userId] = id;
+    const msg = await ctx.reply(`✏️ Напиши коментар до "${item.name}":`);
     pendingCommentMessages[userId] = msg.message_id;
     return ctx.answerCbQuery();
   }
 
-  if (data.startsWith('delcom_')) {
-    if (ctx.from.id !== prod.author_id)
+  if (cmd === 'delcom') {
+    if (ctx.from.id !== item.author_id)
       return ctx.answerCbQuery('🔒 Лише автор може видалити коментар', { show_alert: true });
-    prod.comment = '';
+
+    item.comment = '';
     saveData();
 
-    const status = prod.bought ? '✅' : '⬜️';
-    const meta = `\n_👤 ${prod.author_name}  🕓 ${escapeMarkdown(formatDateTime(prod.created_at))}_`;
-
-    ctx.telegram.editMessageText(ctx.chat.id, prod.message_id, null,
-      `${status} *${escapeMarkdown(item)}*${meta}`, {
+    const meta = `\n_👤 ${item.author_name}  🕓 ${escapeMarkdown(formatDateTime(item.created_at))}_`;
+    const msg = `${item.bought ? '✅' : '⬜️'} *${escapeMarkdown(item.name)}*${meta}`;
+    ctx.telegram.editMessageText(ctx.chat.id, item.message_id, null, msg, {
       parse_mode: 'MarkdownV2',
-      ...getItemKeyboard(item)
-    }).catch(console.error);
+      ...getItemKeyboard(id)
+    });
     return ctx.answerCbQuery('Коментар видалено');
   }
 
-  if (data.startsWith('delete_')) {
-    if (ctx.from.id !== prod.author_id)
+  if (cmd === 'delete') {
+    if (ctx.from.id !== item.author_id)
       return ctx.answerCbQuery('🔒 Лише автор може видалити товар', { show_alert: true });
 
-    ctx.telegram.deleteMessage(ctx.chat.id, prod.message_id).catch(() => {});
-    delete shoppingList[item];
+    ctx.telegram.deleteMessage(ctx.chat.id, item.message_id).catch(() => {});
+    delete shoppingList[id];
     saveData();
     return ctx.answerCbQuery('Продукт видалено');
   }
 
-  if (data.startsWith('edit_')) {
-    if (ctx.from.id !== prod.author_id)
+  if (cmd === 'edit') {
+    if (ctx.from.id !== item.author_id)
       return ctx.answerCbQuery('🔒 Лише автор може редагувати', { show_alert: true });
 
-    pendingEdits[userId] = item;
-    ctx.reply(`✏️ Введи нову назву для "${item}":`);
+    pendingEdits[userId] = id;
+    ctx.reply(`✏️ Введи нову назву для "${item.name}":`);
     return ctx.answerCbQuery();
   }
 });
