@@ -10,6 +10,8 @@ let summaryMessageId = null;
 let pendingComments = {};
 let pendingEdits = {};
 let pendingCommentMessages = {};
+let pendingEditMessages = {};
+
 
 function loadData() {
   if (fs.existsSync(DATA_FILE)) {
@@ -99,7 +101,9 @@ bot.on('text', async (ctx) => {
       parse_mode: 'MarkdownV2',
       ...getItemKeyboard(id)
     });
+
     ctx.deleteMessage(ctx.message.message_id).catch(() => {});
+    
     if (pendingCommentMessages[userId]) {
       ctx.deleteMessage(pendingCommentMessages[userId]).catch(() => {});
       delete pendingCommentMessages[userId];
@@ -122,6 +126,12 @@ bot.on('text', async (ctx) => {
       ...getItemKeyboard(id)
     });
     ctx.deleteMessage(ctx.message.message_id).catch(() => {});
+
+    if (pendingEditMessages[userId]) {
+        ctx.deleteMessage(pendingEditMessages[userId]).catch(() => {});
+        delete pendingEditMessages[userId];
+    }
+
     return;
   }
 
@@ -283,7 +293,9 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery('🔒 Лише автор може редагувати', { show_alert: true });
 
     pendingEdits[userId] = id;
-    ctx.reply(`✏️ Введи нову назву для "${item.name}":`);
+    const prompt = await ctx.reply(`✏️ Введи нову назву для "${item.name}":`);
+    pendingEditMessages[userId] = prompt.message_id;
+
     return ctx.answerCbQuery();
   }
 });
